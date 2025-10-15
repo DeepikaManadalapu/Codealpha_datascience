@@ -1,0 +1,94 @@
+# ======= Robust Predict, Evaluate & Visualize =======
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score, mean_squared_error
+
+# --- 1) Quick sanity checks ---
+print("DATA SHAPES:")
+print("X_train:", X_train.shape, "X_test:", X_test.shape)
+print("y_train:", getattr(y_train, 'shape', np.shape(y_train)), "y_test:", getattr(y_test, 'shape', np.shape(y_test)))
+print("\nAny NaNs in X_train/X_test/y_train/y_test?")
+print("X_train NaNs:", X_train.isnull().sum().sum())
+print("X_test NaNs: ", X_test.isnull().sum().sum())
+print("y_train NaNs:", pd.Series(y_train).isnull().sum())
+print("y_test NaNs: ", pd.Series(y_test).isnull().sum())
+
+# --- 2) Ensure X_train/X_test have same columns (common source of errors) ---
+train_cols = list(X_train.columns)
+test_cols  = list(X_test.columns)
+extra_in_test = set(test_cols) - set(train_cols)
+extra_in_train = set(train_cols) - set(test_cols)
+print("\nColumn differences:")
+print("Columns only in test:", extra_in_test)
+print("Columns only in train:", extra_in_train)
+
+# If columns mismatch (usually due to get_dummies producing different columns),
+# reindex test to have same columns as train, filling missing with 0.
+if extra_in_test or extra_in_train:
+    print("Aligning X_test to X_train columns (and vice-versa) by reindexing with fill_value=0.")
+    X_test = X_test.reindex(columns=train_cols, fill_value=0)
+    X_train = X_train.reindex(columns=train_cols, fill_value=0)  # just to be safe
+    print("After reindex -> X_train:", X_train.shape, "X_test:", X_test.shape)
+
+# --- 3) Convert to numerical numpy arrays and ensure no NaNs remain ---
+X_train_np = np.asarray(X_train, dtype=float)
+X_test_np  = np.asarray(X_test, dtype=float)
+y_train_np = np.asarray(y_train, dtype=float).ravel()
+y_test_np  = np.asarray(y_test, dtype=float).ravel()
+
+if np.isnan(X_train_np).any() or np.isnan(X_test_np).any():
+    raise ValueError("NaNs detected in feature arrays after reindexing. Check preprocessing.")
+
+# --- 4) Fit model (linear regression as example) with try/except for clearer errors ---
+model = LinearRegression()
+try:
+    model.fit(X_train_np, y_train_np)
+    print("\nModel trained successfully.")
+except Exception as e:
+    print("Error while training model:", e)
+    raise
+
+# --- 5) Predict and evaluate (safe) ---
+try:
+    y_pred = model.predict(X_test_np)
+except Exception as e:
+    print("Error during prediction:", e)
+    # Check common cause: column/shape mismatch
+    print("X_test_np shape:", X_test_np.shape, "expected cols:", X_train_np.shape[1])
+    raise
+
+# Metrics
+r2 = r2_score(y_test_np, y_pred)
+mse = mean_squared_error(y_test_np, y_pred)
+rmse = np.sqrt(mse)
+print(f"\nEvaluation metrics:\nR2 score: {r2:.4f}\nMSE: {mse:.4f}\nRMSE: {rmse:.4f}")
+
+# --- 6) Plot: Actual vs Predicted + a 45-degree reference line ---
+plt.figure(figsize=(8,6))
+plt.scatter(y_test_np, y_pred, alpha=0.6)
+lims = [min(min(y_test_np), min(y_pred)), max(max(y_test_np), max(y_pred))]
+plt.plot(lims, lims, '--', linewidth=1)   # perfect prediction line
+plt.xlabel("Actual Selling Price")
+plt.ylabel("Predicted Selling Price")
+plt.title("Actual vs Predicted - Car Price")
+plt.grid(True)
+plt.show()
+
+# --- 7) Plot residuals (errors) to inspect bias / variance problems ---
+residuals = y_test_np - y_pred
+plt.figure(figsize=(8,6))
+plt.scatter(y_pred, residuals, alpha=0.6)
+plt.axhline(0, linestyle='--')
+plt.xlabel("Predicted Selling Price")
+plt.ylabel("Residual (Actual - Predicted)")
+plt.title("Residuals vs Predicted - Check for patterns")
+plt.grid(True)
+plt.show()
+
+# --- 8) Optional: Show distribution of residuals ---
+plt.figure(figsize=(8,5))
+plt.hist(residuals, bins=30)
+plt.xlabel("Residual")
+plt.title("Residual Distribution")
+plt.show()
